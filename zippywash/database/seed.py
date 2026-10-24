@@ -25,6 +25,23 @@ SLOT_CAPACITY = 4
 DAYS_AHEAD = 14
 
 
+def slot_id(day: date, start_time: str) -> str:
+    return f"SLT-{day:%Y%m%d}-{start_time[:2]}"
+
+
+def ensure_rolling_slots(repo: Repository, today: date | None = None) -> int:
+    """Keep bookable slots for the next DAYS_AHEAD days. Safe to run every time the app starts:
+    existing slots (and their booked capacity) are never touched. Returns how many were added."""
+    today = today or date.today()
+    before = repo.conn.execute("SELECT COUNT(*) FROM time_slots").fetchone()[0]
+    for d in range(DAYS_AHEAD):
+        day = today + timedelta(days=d)
+        for t in SLOT_TIMES:
+            repo.add_slot_if_missing(TimeSlot(slot_id(day, t), day, t, SLOT_CAPACITY))
+    repo.conn.commit()
+    return repo.conn.execute("SELECT COUNT(*) FROM time_slots").fetchone()[0] - before
+
+
 def seed(repo: Repository, today: date | None = None) -> None:
     today = today or date.today()
     with repo.conn:
@@ -52,10 +69,7 @@ def seed(repo: Repository, today: date | None = None) -> None:
         repo.save_promotion(Promotion("PRM-WELCOME", "WELCOME10", Decimal("10.00")))
         repo.save_promotion(Promotion("PRM-SUMMER", "SUMMER26", Decimal("5.00"), active=False))
 
-        for d in range(DAYS_AHEAD):
-            day = today + timedelta(days=d)
-            for t in SLOT_TIMES:
-                repo.save_slot(TimeSlot(f"SLT-{day:%m%d}-{t[:2]}", day, t, SLOT_CAPACITY))
+        ensure_rolling_slots(repo, today)
 
         customers = [
             (Customer("CUS-LEA", "Léa Tremblay", "lea.tremblay@example.com"),
@@ -85,7 +99,7 @@ def seed(repo: Repository, today: date | None = None) -> None:
     t1, t2, t3 = (today + timedelta(days=n) for n in (1, 2, 3))
 
     def slot(d, h):
-        return f"SLT-{d:%m%d}-{h}"
+        return slot_id(d, h)
 
     done = booking.book(customer_id="CUS-LEA", service_type_id="SVC-WF", bag_size="Medium",
                         pickup_address_id="ADR-LEA1", delivery_address_id="ADR-LEA1",
