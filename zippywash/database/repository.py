@@ -139,6 +139,14 @@ class Repository:
         return [self._slot(r) for r in self._all(
             "SELECT * FROM time_slots WHERE date>=? ORDER BY date, start_time", from_date.isoformat())]
 
+    def add_slot_if_missing(self, s: TimeSlot) -> None:
+        """Create a slot only if none exists for that date and time, so booked capacity is never reset."""
+        exists = self._one("SELECT 1 FROM time_slots WHERE date=? AND start_time=?",
+                           s.date.isoformat(), s.start_time)
+        if not exists:
+            self.conn.execute("INSERT OR IGNORE INTO time_slots VALUES (?,?,?,?)",
+                              (s.time_slot_id, s.date.isoformat(), s.start_time, s.available_capacity))
+
     def save_slot(self, s: TimeSlot) -> None:
         self.conn.execute(
             "INSERT INTO time_slots VALUES (?,?,?,?) ON CONFLICT(time_slot_id) DO UPDATE SET "
