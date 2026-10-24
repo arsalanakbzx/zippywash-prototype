@@ -7,7 +7,7 @@ import pytest
 from zippywash.common import DomainError, OrderStatus, PaymentStatus
 from zippywash.database.db import connect, create_schema
 from zippywash.database.repository import Repository
-from zippywash.database.seed import seed
+from zippywash.database.seed import ensure_rolling_slots, seed, slot_id
 from zippywash.services.booking_service import BookingService
 from zippywash.services.customer_profile_service import CustomerProfileService
 from zippywash.services.order_tracking_service import OrderTrackingService
@@ -16,7 +16,7 @@ TODAY = date.today()
 
 
 def slot(days, hour):
-    return f"SLT-{TODAY + timedelta(days=days):%m%d}-{hour}"
+    return slot_id(TODAY + timedelta(days=days), hour)
 
 
 @pytest.fixture
@@ -138,3 +138,14 @@ def test_database_rejects_promotion_and_reward_together(repo):
     repo.conn.execute("INSERT INTO rewards VALUES ('RW1','Free bag',100,'10.00',1)")
     with pytest.raises(sqlite3.IntegrityError):
         repo.conn.execute("UPDATE orders SET promotion_id='PRM-WELCOME', reward_id='RW1'")
+
+
+def test_slots_keep_rolling_forward_without_resetting_bookings(repo):
+    booked = book(repo).order                                   # takes one seat in slot(4, "08")
+    later = TODAY + timedelta(days=30)
+    added = ensure_rolling_slots(repo, later)
+    assert added == 14 * 3                                     # a new two-week window appeared
+    assert repo.get_slot(slot_id(later, "08")) is not None
+    assert ensure_rolling_slots(repo, later) == 0              # running again adds nothing
+    assert repo.get_slot(slot(4, "08")).available_capacity == 3   # booked seat still taken
+    assert repo.get_order(booked.order_id).status == OrderStatus.SCHEDULED
