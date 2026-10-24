@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+zippywash.db
+.venv/
+.DS_Store
