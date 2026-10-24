@@ -15,10 +15,12 @@ import streamlit as st
 from zippywash.common import STATUS_SEQUENCE, DomainError, OrderStatus, PaymentStatus
 from zippywash.database.db import connect, create_schema, is_empty
 from zippywash.database.repository import Repository
-from zippywash.database.seed import seed
+from zippywash.database.seed import ensure_rolling_slots, seed
 from zippywash.services.booking_service import BookingService
 from zippywash.services.customer_profile_service import CustomerProfileService
 from zippywash.services.order_tracking_service import ROLE_FOR_STATUS, OrderTrackingService
+
+REPO_URL = "https://github.com/arsalanakbzx/zippywash-prototype"
 
 st.set_page_config(page_title="ZippyWash", page_icon="🧺", layout="centered")
 
@@ -43,7 +45,20 @@ def get_repo() -> Repository:
     return repo
 
 
+def reset_demo_data(repo: Repository) -> None:
+    """Drop every table, rebuild the schema and reload the demo data."""
+    conn = repo.conn
+    conn.execute("PRAGMA foreign_keys = OFF")
+    for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+        conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
+    create_schema(conn)
+    seed(repo)
+
+
 repo = get_repo()
+ensure_rolling_slots(repo)   # bookable slots always cover the next 14 days
 booking, tracking, profiles = BookingService(repo), OrderTrackingService(repo), CustomerProfileService(repo)
 
 
@@ -79,13 +94,23 @@ if role == "Customer":
     customers = repo.list_customers()
     customer = st.sidebar.selectbox("Customer account", customers, format_func=lambda c: c.name, key="cust")
 else:
-    staff_list = repo.list_staff()
+    role_order = {"Driver": 0, "LaundryStaff": 1, "Administrator": 2}
+    staff_list = sorted(repo.list_staff(), key=lambda s: min(role_order[r.value] for r in s.roles))
     staff_member = st.sidebar.selectbox(
         "Staff member", staff_list, key="staff",
         format_func=lambda s: f"{s.name} · {', '.join(r.value for r in s.roles)}")
 
 st.sidebar.divider()
-st.sidebar.caption("Demo data only. Delete zippywash.db to reset.")
+st.sidebar.caption("All people, addresses and cards are sample data. "
+                   "Everyone testing this link shares the same data.")
+with st.sidebar.expander("Reset demo data"):
+    st.write("Deletes every order made by testers and restores the original sample data.")
+    sure = st.checkbox("Yes, reset everything", key="reset_ok")
+    if st.button("Reset demo data", disabled=not sure):
+        reset_demo_data(repo)
+        st.session_state.clear()
+        st.rerun()
+st.sidebar.markdown(f"[Source code on GitHub]({REPO_URL})")
 
 
 # =================================================================
@@ -206,11 +231,13 @@ def orders_tab(customer):
         title = f"{order.order_id} · {services[order.service_type_id]}, {order.bag_size.value} · {order.status.value}"
         with st.expander(title, expanded=order.status not in (OrderStatus.DELIVERED, OrderStatus.CANCELLED)):
             timeline(order)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total", money(order.estimated_total))
-            c2.metric("Pickup", p_slot.label() if p_slot else "-")
+            d_slot = repo.get_slot(order.delivery_time_slot_id)
             paid = [p for p in payments if p.status in (PaymentStatus.AUTHORIZED, PaymentStatus.REFUNDED)]
-            c3.metric("Receipt", paid[-1].receipt_number if paid else "-")
+            c1, c2 = st.columns(2)
+            c1.markdown(f"**Total paid**  \n{money(order.estimated_total)}")
+            c2.markdown(f"**Receipt**  \n{paid[-1].receipt_number if paid else '-'}")
+            c1.markdown(f"**Pickup**  \n{p_slot.label() if p_slot else '-'}")
+            c2.markdown(f"**Delivery**  \n{d_slot.label() if d_slot else '-'}")
             st.caption("Payment attempts: " + ", ".join(
                 f"{p.status.value} {money(p.amount)}" for p in payments))
             history_table(order)
@@ -297,6 +324,23 @@ def staff_board(staff):
 
 
 # ---------------- page ----------------
+with st.expander("👋 New here? What this is and how to try it", expanded="seen_guide" not in st.session_state):
+    st.session_state["seen_guide"] = True
+    st.markdown("""
+**ZippyWash** is a Montréal laundry pickup-and-delivery service. This is the first working
+prototype of its order system, built by BTM 495 Team 5 (Concordia, Fall 2026) from our UML class diagram.
+
+**Try it in 2 minutes**
+1. As customer **Léa**, open *Book a pickup*. Choose a service, bag size and times. Type promo code `WELCOME10`.
+2. Pay with **Mastercard ending 0002**. It is declined on purpose. Retry with **Visa ending 4242**.
+3. Open *My orders* to see your order, its receipt and status timeline.
+4. In the sidebar, switch to **Staff → Marc Gagnon (Driver)** and mark your order *Picked Up*.
+   Laundry staff can't do that step, only drivers can.
+5. Switch back to Léa: the timeline moved and a notification arrived in *Profile*.
+
+No real payments happen. Nothing here is real customer data.
+""")
+
 if role == "Customer":
     st.title(f"Hi, {customer.name.split()[0]}")
     t1, t2, t3 = st.tabs(["Book a pickup", "My orders", "Profile"])
