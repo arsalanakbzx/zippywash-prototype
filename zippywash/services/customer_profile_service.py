@@ -11,19 +11,24 @@ class CustomerProfileService:
     def __init__(self, repo: Repository):
         self.repo = repo
 
-    def update_profile(self, customer_id: str, name: str, contact_details: str) -> Customer:
+    def update_profile(self, customer_id: str, name: str, contact_details: str,
+                       service_preferences: str | None = None) -> Customer:
         with self.repo.conn:
             customer = self.repo.get_customer(customer_id)
             if customer is None:
                 raise DomainError("Customer not found.")
-            customer.update_profile(name, contact_details)
+            customer.update_profile(name, contact_details,
+                                    customer.service_preferences if service_preferences is None
+                                    else service_preferences)
             self.repo.save_customer(customer)
             return customer
 
-    def add_address(self, customer_id: str, street: str, postal_code: str) -> Address:
+    def add_address(self, customer_id: str, street: str, postal_code: str,
+                    access_instructions: str | None = None) -> Address:
         """Saves the address and tells the customer whether ZippyWash serves it."""
         with self.repo.conn:
-            address = Address(new_id("ADR"), customer_id, street.strip(), postal_code.strip().upper())
+            address = Address(new_id("ADR"), customer_id, street.strip(), postal_code.strip().upper(),
+                              access_instructions=(access_instructions or "").strip() or None)
             address.assign_sector(self.repo.list_sectors())
             self.repo.save_address(address)
             return address

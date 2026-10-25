@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from zippywash.common import BagSize, DomainError, NotificationType, OrderStatus, new_id, now_iso
+from zippywash.common import BagSize, DomainError, NotificationType, OrderStatus, PickupRequestType, new_id, now_iso
 from zippywash.customer_order_service.notification import Notification
 from zippywash.customer_order_service.order import Order, PriceBreakdown
 from zippywash.customer_order_service.order_status_update import OrderStatusUpdate
@@ -32,10 +32,9 @@ class BookingService:
     # ---------- price preview (no saving) ----------
     def quote(self, customer_id: str, service_type_id: str, bag_size: str,
               promo_code: str | None = None) -> PriceBreakdown:
-        service = self._service(service_type_id)
-        promo = self._promo(promo_code)
-        preview = Order("PREVIEW", customer_id, service_type_id, BagSize(bag_size), "", "")
-        return preview.calculate_estimate(service, promo)
+        preview = Order("PREVIEW", customer_id, BagSize(bag_size), "", "")
+        preview.add_item(self._service(service_type_id))
+        return preview.calculate_estimate(self._promo(promo_code))
 
     # ---------- full booking ----------
     def book(self, *, customer_id: str, service_type_id: str, bag_size: str,
@@ -55,11 +54,13 @@ class BookingService:
                 raise DomainError("Choose a pickup and delivery address and time slot.")
             Order.validate_booking(customer_id, pickup, delivery, p_slot, d_slot)
 
-            order = Order(new_id("ORD"), customer_id, service_type_id, BagSize(bag_size),
+            order = Order(new_id("ORD"), customer_id, BagSize(bag_size),
                           pickup_address_id, delivery_address_id,
+                          pickup_request_type=PickupRequestType.SCHEDULED,
                           pickup_time_slot_id=pickup_slot_id, delivery_time_slot_id=delivery_slot_id,
                           created_at=now_iso())
-            order.calculate_estimate(self._service(service_type_id), self._promo(promo_code))
+            order.add_item(self._service(service_type_id))   # the UI books one service per order
+            order.calculate_estimate(self._promo(promo_code))
             repo.save_order(order)                      # saved as Draft until payment succeeds
             return self._pay_and_confirm(order, payment_method_id)
 
@@ -79,13 +80,13 @@ class BookingService:
             raise DomainError("Choose a payment method.")
         method.validate(order.customer_id)
 
-        payment = Payment.calculate_total(order.order_id, method, order.estimated_total)
+        payment = Payment.create_attempt(order, method)
         approved = payment.authorize(self.processor, method)
         repo.save_payment(payment)
 
         if not approved:
             self._notify(order.customer_id, NotificationType.PAYMENT_RESULT,
-                         f"Payment for order {order.order_id} was declined.")
+                         f"Payment for order {order.order_id} was declined.", payment_id=payment.payment_id)
             return BookingResult(False, order, payment, payment.decline_reason or "Payment declined.")
 
         p_slot, d_slot = repo.get_slot(order.pickup_time_slot_id), repo.get_slot(order.delivery_time_slot_id)
@@ -100,11 +101,14 @@ class BookingService:
         order.history.append(update)
         self._notify(order.customer_id, NotificationType.BOOKING_CONFIRMED,
                      f"Order {order.order_id} confirmed. Pickup {p_slot.label()}. "
-                     f"Receipt {payment.receipt_number}.", status_update_id=update.status_update_id)
+                     f"Receipt {payment.receipt_number}.", status_update_id=update.status_update_id,
+                     payment_id=payment.payment_id)
         return BookingResult(True, order, payment, f"Order {order.order_id} is booked.")
 
-    def _notify(self, customer_id: str, type_: NotificationType, message: str, status_update_id=None):
-        n = Notification.create(type_, message, customer_id=customer_id, status_update_id=status_update_id)
+    def _notify(self, customer_id: str, type_: NotificationType, message: str, status_update_id=None,
+                payment_id=None):
+        n = Notification.create(type_, message, customer_id=customer_id, status_update_id=status_update_id,
+                                payment_id=payment_id)
         n.send()
         self.repo.add_notification(n)
 

@@ -35,7 +35,7 @@ class OrderTrackingService:
             if target is None:
                 raise DomainError(f"Order {order_id} is {order.status.value}; nothing left to update.")
             needed = ROLE_FOR_STATUS[target]
-            if not staff.has_role(needed):
+            if not staff.check_authorization(needed):
                 raise DomainError(f"Only a {needed.value} can mark an order '{target.value}'.")
 
             order.update_status(target)
