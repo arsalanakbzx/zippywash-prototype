@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from zippywash.common import STATUS_SEQUENCE, BagSize, DomainError, OrderStatus, money
+from zippywash.common import STATUS_SEQUENCE, BagSize, DomainError, OrderStatus, PickupRequestType, money
 from zippywash.config import DELIVERY_FEE, GST_RATE, MIN_TURNAROUND_DAYS, QST_RATE
 from zippywash.customer_order_service.address import Address
+from zippywash.customer_order_service.order_item import OrderItem
 from zippywash.customer_order_service.promotion import Promotion
 from zippywash.customer_order_service.service_type import ServiceType
 from zippywash.customer_order_service.time_slot import TimeSlot
@@ -15,7 +16,10 @@ from zippywash.customer_order_service.time_slot import TimeSlot
 
 @dataclass
 class PriceBreakdown:
-    """Line items shown to the customer before they pay (UC-05)."""
+    """Supporting value object (not a Milestone 3 class): the price lines shown before paying.
+
+    Maps onto Order's pricing attributes: subtotal = service_price, discount_amount = discount,
+    delivery_fee = delivery_fee, tax_amount = gst + qst, estimated_total = total."""
     service_price: Decimal
     discount: Decimal
     delivery_fee: Decimal
@@ -28,33 +32,57 @@ class PriceBreakdown:
 class Order:
     order_id: str
     customer_id: str
-    service_type_id: str
     bag_size: BagSize
     pickup_address_id: str
     delivery_address_id: str
     status: OrderStatus = OrderStatus.DRAFT
+    pickup_request_type: PickupRequestType = PickupRequestType.SCHEDULED
+    subtotal: Decimal = Decimal("0.00")
+    delivery_fee: Decimal = Decimal("0.00")
+    tax_amount: Decimal = Decimal("0.00")
+    discount_amount: Decimal = Decimal("0.00")
     estimated_total: Decimal = Decimal("0.00")
+    final_total: Decimal | None = None            # [0..1], set once payment is authorized
+    # implementation references (associations)
     pickup_time_slot_id: str | None = None
     delivery_time_slot_id: str | None = None
     promotion_id: str | None = None
     reward_id: str | None = None
     created_at: str = ""
-    history: list = field(default_factory=list)   # OrderStatusUpdate records, oldest first
+    items: list[OrderItem] = field(default_factory=list)   # OrderItem [1..*] (aggregation)
+    history: list = field(default_factory=list)            # OrderStatusUpdate records, oldest first
+
+    # ---------- items ----------
+    def add_item(self, service: ServiceType, quantity: Decimal = Decimal("1")) -> OrderItem:
+        item = OrderItem.for_service(self.order_id, service, self.bag_size, quantity)
+        self.items.append(item)
+        return item
 
     # ---------- calculateEstimate() ----------
-    def calculate_estimate(self, service_type: ServiceType,
-                           promotion: Promotion | None = None) -> PriceBreakdown:
+    def calculate_estimate(self, promotion: Promotion | None = None) -> PriceBreakdown:
+        """Price every OrderItem, apply one promotion, add the delivery fee and Quebec taxes."""
+        if not self.items:
+            raise DomainError("An order needs at least one service.")
         if promotion is not None and self.reward_id is not None:
             raise DomainError("An order can use a promo code or a loyalty reward, not both.")
-        service_price = service_type.calculate_base_price(self.bag_size)
-        discount = promotion.calculate_discount(service_price) if promotion else money(0)
-        taxable = service_price - discount + DELIVERY_FEE
+        subtotal = money(sum((item.calculate_line_total() for item in self.items), Decimal("0")))
+        discount = promotion.calculate_discount(subtotal) if promotion else money(0)
+        taxable = subtotal - discount + DELIVERY_FEE
         gst = money(taxable * GST_RATE)
         qst = money(taxable * QST_RATE)
         total = money(taxable + gst + qst)
+
+        self.subtotal, self.discount_amount = subtotal, discount
+        self.delivery_fee, self.tax_amount = money(DELIVERY_FEE), money(gst + qst)
         self.estimated_total = total
         self.promotion_id = promotion.promotion_id if promotion else None
-        return PriceBreakdown(service_price, discount, money(DELIVERY_FEE), gst, qst, total)
+        return PriceBreakdown(subtotal, discount, money(DELIVERY_FEE), gst, qst, total)
+
+    # ---------- calculateFinalTotal() ----------
+    def calculate_final_total(self) -> Decimal:
+        """The amount actually charged. In Prototype 1 it equals the confirmed estimate."""
+        self.final_total = money(self.subtotal - self.discount_amount + self.delivery_fee + self.tax_amount)
+        return self.final_total
 
     # ---------- booking rules checked before confirm() ----------
     @staticmethod
@@ -86,6 +114,7 @@ class Order:
         self.pickup_time_slot_id = pickup_slot.time_slot_id
         self.delivery_time_slot_id = delivery_slot.time_slot_id
         self.status = OrderStatus.SCHEDULED
+        self.calculate_final_total()
 
     # ---------- updateStatus() ----------
     def next_status(self) -> OrderStatus | None:

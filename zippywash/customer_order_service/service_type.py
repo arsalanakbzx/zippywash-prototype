@@ -1,10 +1,10 @@
-"""C03 ServiceType — a laundry service with a base rate per standard bag."""
+"""C03 ServiceType — a laundry service, priced by its pricing unit (per bag in Prototype 1)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
 
-from zippywash.common import BagSize, DomainError, money
+from zippywash.common import BagSize, DomainError, PricingUnit, money
 from zippywash.config import BAG_SIZE_MULTIPLIER
 
 
@@ -14,6 +14,7 @@ class ServiceType:
     name: str
     base_rate: Decimal
     active: bool = True
+    pricing_unit: PricingUnit = PricingUnit.PER_BAG
 
     def calculate_base_price(self, bag_size: BagSize) -> Decimal:
         if not self.active:

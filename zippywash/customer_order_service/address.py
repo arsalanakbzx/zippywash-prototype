@@ -19,6 +19,7 @@ class Address:
     postal_code: str
     serviceable: bool = False
     sector_id: str | None = None
+    access_instructions: str | None = None   # [0..1], e.g. "Buzz 08, leave with concierge"
 
     def label(self) -> str:
         return f"{self.street}, {self.postal_code}"

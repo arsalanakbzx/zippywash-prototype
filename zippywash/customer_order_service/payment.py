@@ -3,10 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from zippywash.common import DomainError, PaymentStatus, new_id, now_iso
 from zippywash.customer_order_service.payment_method import PaymentMethod
 from zippywash.integrations.payment_processor import PaymentProcessor
+
+if TYPE_CHECKING:
+    from zippywash.customer_order_service.order import Order
 
 
 @dataclass
@@ -21,9 +25,13 @@ class Payment:
     decline_reason: str | None = None   # not persisted; shown to the customer
 
     @classmethod
-    def calculate_total(cls, order_id: str, method: PaymentMethod, amount: Decimal) -> "Payment":
-        """Start a new attempt for the order's final amount."""
-        return cls(new_id("PAY"), order_id, method.payment_method_id, amount, created_at=now_iso())
+    def create_attempt(cls, order: "Order", method: PaymentMethod) -> "Payment":
+        """Create a new payment attempt for the Order's payable amount.
+
+        Pricing belongs to Order (calculate_estimate / calculate_final_total); Payment only
+        creates and processes the attempt."""
+        return cls(new_id("PAY"), order.order_id, method.payment_method_id, order.estimated_total,
+                   created_at=now_iso())
 
     def authorize(self, processor: PaymentProcessor, method: PaymentMethod) -> bool:
         result = processor.authorize(method.token, self.amount)
