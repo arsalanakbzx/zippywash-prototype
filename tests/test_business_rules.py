@@ -135,7 +135,8 @@ def test_new_address_gets_sector_or_is_flagged(repo):
 
 def test_database_rejects_promotion_and_reward_together(repo):
     import sqlite3
-    repo.conn.execute("INSERT INTO rewards VALUES ('RW1','Free bag',100,'10.00',1)")
+    repo.conn.execute("INSERT INTO rewards (reward_id, name, points_required, discount_amount, active) "
+                      "VALUES ('RW1','Free bag',100,'10.00',1)")
     with pytest.raises(sqlite3.IntegrityError):
         repo.conn.execute("UPDATE orders SET promotion_id='PRM-WELCOME', reward_id='RW1'")
 
