@@ -1,10 +1,10 @@
 """Business-rule tests. Run with:  python -m pytest -q"""
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 
-from zippywash.common import DomainError, OrderStatus, PaymentStatus
+from zippywash.common import DomainError, OrderStatus, PaymentStatus, today_local
 from zippywash.database.db import connect, create_schema
 from zippywash.database.repository import Repository
 from zippywash.database.seed import ensure_rolling_slots, seed, slot_id
@@ -12,7 +12,7 @@ from zippywash.services.booking_service import BookingService
 from zippywash.services.customer_profile_service import CustomerProfileService
 from zippywash.services.order_tracking_service import OrderTrackingService
 
-TODAY = date.today()
+TODAY = today_local()
 
 
 def slot(days, hour):
@@ -97,7 +97,7 @@ def test_expired_and_unknown_promo_codes_are_rejected(repo):
 def test_status_moves_one_step_and_respects_roles(repo):
     order = book(repo).order
     t = OrderTrackingService(repo)
-    with pytest.raises(DomainError, match="Driver"):
+    with pytest.raises(DomainError, match="driver role"):
         t.advance_status(order.order_id, "STF-LDY1")             # laundry staff can't mark Picked Up
     assert t.advance_status(order.order_id, "STF-DRV1").status == OrderStatus.PICKED_UP
     assert t.advance_status(order.order_id, "STF-LDY1").status == OrderStatus.WAITING_FOR_WASH
@@ -150,3 +150,36 @@ def test_slots_keep_rolling_forward_without_resetting_bookings(repo):
     assert ensure_rolling_slots(repo, later) == 0              # running again adds nothing
     assert repo.get_slot(slot(4, "08")).available_capacity == 3   # booked seat still taken
     assert repo.get_order(booked.order_id).status == OrderStatus.SCHEDULED
+
+
+# ---------------- Montréal time and past slots ----------------
+def test_slot_that_already_started_cannot_be_booked():
+    from datetime import datetime
+    from zippywash.customer_order_service.time_slot import TimeSlot
+    slot = TimeSlot("S", TODAY, "08:00", 4)
+    assert slot.has_started(datetime.combine(TODAY, datetime.min.time()).replace(hour=9))
+    assert not slot.has_started(datetime.combine(TODAY, datetime.min.time()).replace(hour=7))
+
+
+def test_booking_a_pickup_time_that_has_passed_is_rejected(repo, monkeypatch):
+    from datetime import datetime
+    import zippywash.customer_order_service.order as order_module
+    # Pretend it is already 8 p.m. on the pickup day: the 08:00 slot has passed.
+    evening = datetime.combine(TODAY + timedelta(days=4), datetime.min.time()).replace(hour=20)
+    monkeypatch.setattr(order_module, "now_local", lambda: evening)
+    with pytest.raises(DomainError, match="already passed"):
+        book(repo)
+
+
+def test_today_follows_montreal_not_the_server_clock():
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+    from zippywash.common import now_local
+    expected = datetime.now(ZoneInfo("America/Toronto")).replace(tzinfo=None)
+    assert abs((now_local() - expected).total_seconds()) < 5
+
+
+def test_role_names_read_naturally():
+    from zippywash.common import StaffRole
+    assert StaffRole.LAUNDRY_STAFF.label == "laundry staff"
+    assert StaffRole.DRIVER.label == "driver"

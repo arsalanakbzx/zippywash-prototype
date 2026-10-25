@@ -7,13 +7,13 @@ import importlib
 from abc import ABC
 import pkgutil
 import sqlite3
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 from decimal import Decimal
 
 import pytest
 
 import zippywash
-from zippywash.common import (AccountStatus, AddOnType, DomainError, LoyaltyStatus, LoyaltyTransactionType,
+from zippywash.common import (today_local, AccountStatus, AddOnType, DomainError, LoyaltyStatus, LoyaltyTransactionType,
                               MachineStatus, MachineType, MaintenanceStatus, PaymentMethodType, PaymentStatus,
                               PickupRequestType, PricingUnit, RouteStatus, RouteStopStatus, ShiftStatus, StaffRole,
                               StockMovementType, StopType, VehicleStatus, BagSize, OrderStatus, NotificationType)
@@ -78,7 +78,7 @@ MODEL = {
     "C26": (Person, ["name", "contact_details"]),
 }
 
-TODAY = date.today()
+TODAY = today_local()
 
 
 @pytest.fixture
