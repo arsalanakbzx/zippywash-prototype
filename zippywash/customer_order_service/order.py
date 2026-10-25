@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
 from decimal import Decimal
 
-from zippywash.common import STATUS_SEQUENCE, BagSize, DomainError, OrderStatus, PickupRequestType, money
+from zippywash.common import (STATUS_SEQUENCE, BagSize, DomainError, OrderStatus, PickupRequestType, money,
+                              now_local)
 from zippywash.config import DELIVERY_FEE, GST_RATE, MIN_TURNAROUND_DAYS, QST_RATE
 from zippywash.customer_order_service.address import Address
 from zippywash.customer_order_service.order_item import OrderItem
@@ -93,8 +93,8 @@ class Order:
                 raise DomainError(f"{role} address does not belong to this customer.")
             if not addr.serviceable:
                 raise DomainError(f"{role} address {addr.postal_code} is outside our service sectors.")
-        if pickup_slot.date < date.today():
-            raise DomainError("Pickup can't be in the past.")
+        if pickup_slot.has_started(now_local()):
+            raise DomainError("That pickup time has already passed. Pick a later slot.")
         gap = (delivery_slot.date - pickup_slot.date).days
         if gap < MIN_TURNAROUND_DAYS:
             raise DomainError("Delivery must be at least one day after pickup.")

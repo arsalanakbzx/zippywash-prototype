@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from zippywash.common import DomainError, money
+from zippywash.common import DomainError, money, today_local
 
 
 @dataclass
@@ -17,7 +17,7 @@ class Promotion:
     expiry_date: date | None = None   # [0..1]
 
     def validate_eligibility(self, on: date | None = None) -> None:
-        on = on or date.today()
+        on = on or today_local()
         if not self.active:
             raise DomainError(f"Promo code {self.code} has expired.")
         if self.expiry_date is not None and on > self.expiry_date:
