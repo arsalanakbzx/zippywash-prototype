@@ -23,3 +23,6 @@ QST_RATE = Decimal("0.09975")   # Quebec QST 9.975%
 MIN_TURNAROUND_DAYS = 1
 
 CURRENCY_STEP = Decimal("0.01")
+
+# ZippyWash operates in Montréal: "today" and "now" use this time zone, not the server's.
+TIMEZONE = "America/Toronto"

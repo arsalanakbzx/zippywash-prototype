@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
 
-from zippywash.config import CURRENCY_STEP
+from zippywash.config import CURRENCY_STEP, TIMEZONE
+
+try:
+    from zoneinfo import ZoneInfo
+    _TZ = ZoneInfo(TIMEZONE)
+except Exception:  # time zone data missing: fall back to the server clock
+    _TZ = None
 
 
 class DomainError(Exception):
@@ -81,6 +87,12 @@ class StaffRole(str, Enum):
     LAUNDRY_STAFF = "LaundryStaff"
     DRIVER = "Driver"
     ADMINISTRATOR = "Administrator"
+
+    @property
+    def label(self) -> str:
+        """Readable name for messages, e.g. 'laundry staff'."""
+        return {"LaundryStaff": "laundry staff", "Driver": "driver",
+                "Administrator": "administrator"}[self.value]
 
 
 class NotificationType(str, Enum):
@@ -180,8 +192,17 @@ def new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:6].upper()}"
 
 
+def now_local() -> datetime:
+    """Current Montréal date and time (naive), whatever time zone the server runs in."""
+    return datetime.now(_TZ).replace(tzinfo=None) if _TZ else datetime.now()
+
+
+def today_local() -> date:
+    return now_local().date()
+
+
 def now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return now_local().isoformat(timespec="seconds")
 
 
 def money(value) -> Decimal:
