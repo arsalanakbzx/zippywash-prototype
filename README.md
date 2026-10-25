@@ -135,7 +135,7 @@ zippywash/
     repository.py                     Database ⇄ domain objects
     seed.py                           Sample data + self-renewing time slots
 tests/
-  test_business_rules.py              14 business-rule tests
+  test_business_rules.py              18 business-rule tests
   test_milestone3_alignment.py        51 tests: every class and attribute of C01–C26 matches Milestone 3
 ```
 
@@ -148,7 +148,7 @@ to equal the number of classes: Person has no table, and two tables store multiv
 
 - An order has one customer, one or more order items (each for one service type), and a pickup **and** delivery address and time slot.
 - Both addresses must belong to the customer and be inside a ZippyWash service sector.
-- Pickup can't be in the past; delivery is at least one day after pickup; full slots can't be booked.
+- Pickup slots that have already started (Montréal time) are hidden and can't be booked; delivery is at least one day after pickup; full slots can't be booked.
 - **Payment is authorized before an order is confirmed.** A declined attempt leaves the order as *Draft*; every retry is a new payment record.
 - An order uses a promotion **or** a loyalty reward, never both (checked in code and by the database). A discount never exceeds the service price.
 - Status moves one step at a time. Drivers record pickup and delivery steps; laundry staff record washing steps; administrators can record any.
@@ -171,7 +171,7 @@ python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run app.py               # opens http://localhost:8501
-python -m pytest -q                # runs all 65 tests
+python -m pytest -q                # runs all 69 tests
 ```
 
 The database file `zippywash.db` is created automatically with sample data on first run (it is not committed to Git).
