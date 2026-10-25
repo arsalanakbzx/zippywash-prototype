@@ -13,7 +13,7 @@ from datetime import date
 import streamlit as st
 
 from zippywash.common import STATUS_SEQUENCE, DomainError, OrderStatus, PaymentStatus
-from zippywash.database.db import connect, create_schema, is_empty
+from zippywash.database.db import connect, create_schema, drop_all_tables, is_empty
 from zippywash.database.repository import Repository
 from zippywash.database.seed import ensure_rolling_slots, seed
 from zippywash.services.booking_service import BookingService
@@ -47,19 +47,20 @@ def get_repo() -> Repository:
 
 def reset_demo_data(repo: Repository) -> None:
     """Drop every table, rebuild the schema and reload the demo data."""
-    conn = repo.conn
-    conn.execute("PRAGMA foreign_keys = OFF")
-    for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
-        conn.execute(f'DROP TABLE IF EXISTS "{name}"')
-    conn.commit()
-    conn.execute("PRAGMA foreign_keys = ON")
-    create_schema(conn)
+    drop_all_tables(repo.conn)
+    create_schema(repo.conn)
     seed(repo)
 
 
 repo = get_repo()
 ensure_rolling_slots(repo)   # bookable slots always cover the next 14 days
 booking, tracking, profiles = BookingService(repo), OrderTrackingService(repo), CustomerProfileService(repo)
+
+
+def service_names(order) -> str:
+    """Services come from the order's OrderItems (C23)."""
+    names = {s.service_type_id: s.name for s in repo.list_service_types(active_only=False)}
+    return " + ".join(names.get(i.service_type_id, i.service_type_id) for i in order.items)
 
 
 def money(v) -> str:
@@ -225,10 +226,9 @@ def orders_tab(customer):
     if not history:
         st.info("No orders yet. Book your first pickup in the *Book a pickup* tab.")
         return
-    services = {s.service_type_id: s.name for s in repo.list_service_types(active_only=False)}
     for order, payments in history:
         p_slot = repo.get_slot(order.pickup_time_slot_id)
-        title = f"{order.order_id} · {services[order.service_type_id]}, {order.bag_size.value} · {order.status.value}"
+        title = f"{order.order_id} · {service_names(order)}, {order.bag_size.value} · {order.status.value}"
         with st.expander(title, expanded=order.status not in (OrderStatus.DELIVERED, OrderStatus.CANCELLED)):
             timeline(order)
             d_slot = repo.get_slot(order.delivery_time_slot_id)
@@ -255,9 +255,11 @@ def profile_tab(customer):
     with st.form("profile"):
         name = st.text_input("Name", customer.name)
         contact = st.text_input("Email or phone", customer.contact_details)
+        prefs = st.text_input("Service preferences (optional)", customer.service_preferences or "",
+                              placeholder="e.g. Unscented detergent")
         if st.form_submit_button("Save profile"):
             try:
-                profiles.update_profile(customer.customer_id, name, contact)
+                profiles.update_profile(customer.customer_id, name, contact, prefs)
                 st.success("Profile saved.")
             except DomainError as e:
                 st.error(str(e))
@@ -265,14 +267,16 @@ def profile_tab(customer):
     st.markdown("**Saved addresses**")
     for a in repo.list_addresses(customer.customer_id):
         st.write(("✅ " if a.serviceable else "⚠️ ") + a.label() +
-                 ("" if a.serviceable else " — outside our service sectors"))
+                 ("" if a.serviceable else " — outside our service sectors") +
+                 (f"  \n_Access: {a.access_instructions}_" if a.access_instructions else ""))
     with st.form("add_address", clear_on_submit=True):
         c1, c2 = st.columns([3, 1])
         street = c1.text_input("Street address")
         postal = c2.text_input("Postal code", placeholder="H3H 1K6")
+        access = st.text_input("Access instructions (optional)", placeholder="e.g. Buzz 08, leave with concierge")
         if st.form_submit_button("Add address"):
             try:
-                a = profiles.add_address(customer.customer_id, street, postal)
+                a = profiles.add_address(customer.customer_id, street, postal, access)
                 (st.success if a.serviceable else st.warning)(
                     "Address saved." if a.serviceable else "Saved, but we don't serve that area yet.")
             except DomainError as e:
@@ -298,12 +302,11 @@ def staff_board(staff):
     if not orders:
         st.info("No active orders right now.")
         return
-    services = {s.service_type_id: s.name for s in repo.list_service_types(active_only=False)}
     for order in orders:
         customer = repo.get_customer(order.customer_id)
         nxt = order.next_status()
         with st.container(border=True):
-            st.markdown(f"**{order.order_id}** · {customer.name} · {services[order.service_type_id]}, "
+            st.markdown(f"**{order.order_id}** · {customer.name} · {service_names(order)}, "
                         f"{order.bag_size.value}")
             timeline(order)
             if nxt is None:

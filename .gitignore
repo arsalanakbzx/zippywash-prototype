@@ -4,3 +4,4 @@ __pycache__/
 zippywash.db
 .venv/
 .DS_Store
+.env
