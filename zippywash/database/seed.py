@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import date, time, timedelta
 from decimal import Decimal
 
-from zippywash.common import LoyaltyStatus, MachineStatus, MachineType, RouteStatus, StaffRole
+from zippywash.common import LoyaltyStatus, MachineStatus, MachineType, RouteStatus, StaffRole, today_local
 from zippywash.customer_order_service.address import Address
 from zippywash.customer_order_service.customer import Customer
 from zippywash.customer_order_service.loyalty_account import LoyaltyAccount
@@ -40,7 +40,7 @@ def slot_id(day: date, start_time: str) -> str:
 def ensure_rolling_slots(repo: Repository, today: date | None = None) -> int:
     """Keep bookable slots for the next DAYS_AHEAD days. Safe to run every time the app starts:
     existing slots (and their booked capacity) are never touched. Returns how many were added."""
-    today = today or date.today()
+    today = today or today_local()
     before = repo.conn.execute("SELECT COUNT(*) FROM time_slots").fetchone()[0]
     for d in range(DAYS_AHEAD):
         day = today + timedelta(days=d)
@@ -51,7 +51,7 @@ def ensure_rolling_slots(repo: Repository, today: date | None = None) -> int:
 
 
 def seed(repo: Repository, today: date | None = None) -> None:
-    today = today or date.today()
+    today = today or today_local()
     with repo.conn:
         sectors = [
             Sector("SEC-DT", "Downtown", "H3H,H3G,H3A,H3B,H2Z"),
