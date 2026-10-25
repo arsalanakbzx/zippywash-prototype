@@ -4,19 +4,27 @@ Every name, address and price below is SAMPLE DATA for the demo, not ZippyWash's
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 
-from zippywash.common import StaffRole
+from zippywash.common import LoyaltyStatus, MachineStatus, MachineType, RouteStatus, StaffRole
 from zippywash.customer_order_service.address import Address
 from zippywash.customer_order_service.customer import Customer
+from zippywash.customer_order_service.loyalty_account import LoyaltyAccount
+from zippywash.customer_order_service.loyalty_rule import LoyaltyRule
 from zippywash.customer_order_service.payment_method import PaymentMethod
 from zippywash.customer_order_service.promotion import Promotion
+from zippywash.customer_order_service.reward import Reward
 from zippywash.customer_order_service.service_type import ServiceType
 from zippywash.customer_order_service.time_slot import TimeSlot
 from zippywash.database.repository import Repository
+from zippywash.operations_resource.inventory_item import InventoryItem
+from zippywash.operations_resource.machine import Machine
+from zippywash.operations_resource.route import Route
 from zippywash.operations_resource.sector import Sector
 from zippywash.operations_resource.staff_member import StaffMember
+from zippywash.operations_resource.staff_shift import StaffShift
+from zippywash.operations_resource.vehicle import Vehicle
 from zippywash.services.booking_service import BookingService
 from zippywash.services.order_tracking_service import OrderTrackingService
 
@@ -53,9 +61,12 @@ def seed(repo: Repository, today: date | None = None) -> None:
             repo.save_sector(s)
 
         for s in [
-            StaffMember("STF-DRV1", "Marc Gagnon (Driver)", [StaffRole.DRIVER], sector_id="SEC-DT"),
-            StaffMember("STF-LDY1", "Sofia Haddad (Laundry)", [StaffRole.LAUNDRY_STAFF]),
-            StaffMember("STF-ADM1", "Admin User", [StaffRole.ADMINISTRATOR]),
+            StaffMember(name="Marc Gagnon (Driver)", contact_details="marc.gagnon@zippywash.example",
+                        staff_member_id="STF-DRV1", roles=[StaffRole.DRIVER], sector_id="SEC-DT"),
+            StaffMember(name="Sofia Haddad (Laundry)", contact_details="sofia.haddad@zippywash.example",
+                        staff_member_id="STF-LDY1", roles=[StaffRole.LAUNDRY_STAFF]),
+            StaffMember(name="Admin User", contact_details="admin@zippywash.example",
+                        staff_member_id="STF-ADM1", roles=[StaffRole.ADMINISTRATOR]),
         ]:
             repo.save_staff(s)
 
@@ -68,21 +79,24 @@ def seed(repo: Repository, today: date | None = None) -> None:
 
         repo.save_promotion(Promotion("PRM-WELCOME", "WELCOME10", Decimal("10.00")))
         repo.save_promotion(Promotion("PRM-SUMMER", "SUMMER26", Decimal("5.00"), active=False))
+        repo.save_reward(Reward("RWD-FREEBAG", "Free small bag", 250, Decimal("24.99")))
+        repo.save_loyalty_rule(LoyaltyRule("LR-STD", Decimal("1"), date(2026, 9, 1)))
 
         ensure_rolling_slots(repo, today)
 
         customers = [
-            (Customer("CUS-LEA", "Léa Tremblay", "lea.tremblay@example.com"),
-             [("ADR-LEA1", "1450 Rue Sherbrooke O, Apt 8", "H3G 1L3"),
-              ("ADR-LEA2", "3700 Boul Saint-Laurent", "H2X 2V4"),
-              ("ADR-LEA3", "55 Rue Notre-Dame E, Longueuil", "J4H 1A1")]),   # outside sectors on purpose
-            (Customer("CUS-OMAR", "Omar Benali", "514-555-0142"),
-             [("ADR-OMR1", "2100 Boul de Maisonneuve O", "H3H 1K6")]),
+            (Customer(name="Léa Tremblay", contact_details="lea.tremblay@example.com", customer_id="CUS-LEA",
+                      service_preferences="Unscented detergent, fold shirts"),
+             [("ADR-LEA1", "1450 Rue Sherbrooke O, Apt 8", "H3G 1L3", "Buzz 08; leave with the concierge"),
+              ("ADR-LEA2", "3700 Boul Saint-Laurent", "H2X 2V4", None),
+              ("ADR-LEA3", "55 Rue Notre-Dame E, Longueuil", "J4H 1A1", None)]),   # outside sectors on purpose
+            (Customer(name="Omar Benali", contact_details="514-555-0142", customer_id="CUS-OMAR"),
+             [("ADR-OMR1", "2100 Boul de Maisonneuve O", "H3H 1K6", None)]),
         ]
         for customer, addresses in customers:
             repo.save_customer(customer)
-            for aid, street, postal in addresses:
-                a = Address(aid, customer.customer_id, street, postal)
+            for aid, street, postal, access in addresses:
+                a = Address(aid, customer.customer_id, street, postal, access_instructions=access)
                 a.assign_sector(sectors)
                 repo.save_address(a)
 
@@ -93,6 +107,21 @@ def seed(repo: Repository, today: date | None = None) -> None:
             PaymentMethod("PM-OMR-DEB", "CUS-OMAR", "tok_debit_ok_9876", "DebitCard", "Debit ending 9876"),
         ]:
             repo.save_payment_method(pm)
+
+        repo.save_loyalty_account(LoyaltyAccount("LA-LEA", 120, LoyaltyStatus.ACTIVE, date(2026, 9, 15), "CUS-LEA"))
+
+        # Operations sample data (UC-03 / UC-04 screens come in Prototype 2).
+        van = Vehicle("VAN-01", slot_capacity=12)
+        repo.save_vehicle(van)
+        shift = StaffShift("SHF-DRV1-D1", today, time(7, 0), time(15, 0), staff_member_id="STF-DRV1")
+        repo.save_staff_shift(shift)
+        repo.save_staff_shift(StaffShift("SHF-LDY1-D1", today, time(8, 0), time(16, 0), staff_member_id="STF-LDY1"))
+        repo.save_route(Route("RTE-DT-D1", today, RouteStatus.DRAFT, Decimal("0"), 0,
+                              sector_id="SEC-DT", vehicle_id=van.vehicle_id, staff_shift_id=shift.staff_shift_id))
+        repo.save_machine(Machine("MCH-W1", MachineType.WASHER, MachineStatus.OPERATIONAL, Decimal("18"), "Cold wash"))
+        repo.save_machine(Machine("MCH-D1", MachineType.DRYER, MachineStatus.OPERATIONAL, Decimal("15")))
+        repo.save_inventory_item(InventoryItem("INV-DET", "Detergent (litres)", Decimal("42.5"), Decimal("20")))
+        repo.save_inventory_item(InventoryItem("INV-BAG", "Delivery bags", Decimal("180"), Decimal("50")))
 
     # A few orders made through the real services, so history and tracking have content.
     booking, tracking = BookingService(repo), OrderTrackingService(repo)
