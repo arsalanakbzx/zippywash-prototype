@@ -8,11 +8,10 @@ CustomerProfileService).
 """
 from __future__ import annotations
 
-from datetime import date
 
 import streamlit as st
 
-from zippywash.common import STATUS_SEQUENCE, DomainError, OrderStatus, PaymentStatus
+from zippywash.common import STATUS_SEQUENCE, DomainError, OrderStatus, PaymentStatus, now_local
 from zippywash.database.db import connect, create_schema, drop_all_tables, is_empty
 from zippywash.database.repository import Repository
 from zippywash.database.seed import ensure_rolling_slots, seed
@@ -157,7 +156,8 @@ def booking_tab(customer):
 
     services = repo.list_service_types()
     addresses = repo.list_addresses(customer.customer_id)
-    slots = [s for s in repo.list_open_slots(date.today()) if s.check_capacity()]
+    now = now_local()   # Montréal time, not the server's
+    slots = [s for s in repo.list_open_slots(now.date()) if s.check_capacity() and not s.has_started(now)]
     methods = repo.list_payment_methods(customer.customer_id)
 
     st.markdown("**1 · Service and bag size**")
@@ -238,8 +238,9 @@ def orders_tab(customer):
             c2.markdown(f"**Receipt**  \n{paid[-1].receipt_number if paid else '-'}")
             c1.markdown(f"**Pickup**  \n{p_slot.label() if p_slot else '-'}")
             c2.markdown(f"**Delivery**  \n{d_slot.label() if d_slot else '-'}")
+            # "\$" stops Streamlit from reading two dollar amounts as a LaTeX formula
             st.caption("Payment attempts: " + ", ".join(
-                f"{p.status.value} {money(p.amount)}" for p in payments))
+                f"{p.status.value} {money(p.amount)}" for p in payments).replace("$", "\\$"))
             history_table(order)
             if order.can_cancel() and st.button("Cancel order and refund", key=f"cx_{order.order_id}"):
                 try:
@@ -249,9 +250,18 @@ def orders_tab(customer):
                     st.error(str(e))
 
 
+def flash(kind: str, text: str) -> None:
+    """Show a message after st.rerun(), so lists on the page already include the change."""
+    st.session_state["flash"] = (kind, text)
+    st.rerun()
+
+
 def profile_tab(customer):
     st.subheader("Profile")
     st.caption("UC-06 Manage Customer Profile")
+    if "flash" in st.session_state:
+        kind, text = st.session_state.pop("flash")
+        getattr(st, kind)(text)
     with st.form("profile"):
         name = st.text_input("Name", customer.name)
         contact = st.text_input("Email or phone", customer.contact_details)
@@ -260,7 +270,7 @@ def profile_tab(customer):
         if st.form_submit_button("Save profile"):
             try:
                 profiles.update_profile(customer.customer_id, name, contact, prefs)
-                st.success("Profile saved.")
+                flash("success", "Profile saved.")
             except DomainError as e:
                 st.error(str(e))
 
@@ -277,8 +287,9 @@ def profile_tab(customer):
         if st.form_submit_button("Add address"):
             try:
                 a = profiles.add_address(customer.customer_id, street, postal, access)
-                (st.success if a.serviceable else st.warning)(
-                    "Address saved." if a.serviceable else "Saved, but we don't serve that area yet.")
+                if a.serviceable:
+                    flash("success", "Address saved. It's now in your list and in the booking form.")
+                flash("warning", "Address saved, but we don't serve that area yet.")
             except DomainError as e:
                 st.error(str(e))
 
@@ -323,7 +334,7 @@ def staff_board(staff):
                 except DomainError as e:
                     st.error(str(e))
             if not allowed:
-                st.caption(f"Waiting on a {ROLE_FOR_STATUS[nxt].value} for this step.")
+                st.caption(f"This step needs the {ROLE_FOR_STATUS[nxt].label} role.")
 
 
 # ---------------- page ----------------
