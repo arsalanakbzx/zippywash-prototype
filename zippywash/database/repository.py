@@ -15,9 +15,9 @@ from __future__ import annotations
 import sqlite3
 from collections import defaultdict
 
-from zippywash.common import Immutable, link
+from zippywash.common import link
 from zippywash.customer_order_service.loyalty_rule import LoyaltyRule
-from zippywash.database.mapping import BY_CLASS, JOIN_TABLE, MAPPINGS, SORT_KEYS, from_db, to_db
+from zippywash.database.mapping import BY_CLASS, JOIN_TABLE, MAPPINGS, SORT_KEYS, ByClassName, from_db, to_db
 from zippywash.customer_order_service.time_slot import TimeSlot
 from zippywash.operations_resource.machine import Machine
 
@@ -26,7 +26,7 @@ class World:
     """Identity map: exactly one Python object per saved row."""
 
     def __init__(self):
-        self.index: dict[type, dict[str, object]] = {m.cls: {} for m in MAPPINGS}
+        self.index: dict[type, dict[str, object]] = ByClassName({m.cls.__name__: {} for m in MAPPINGS})
         self._snap: dict[int, tuple] = {}          # id(obj) -> row as last saved/loaded
         self._join_snap: set[tuple[str, str]] = set()
 
@@ -55,9 +55,9 @@ class World:
                     if r.target is m.cls and r.inverse:
                         value = getattr(obj, r.inverse, None)
                         neighbours.extend(value if isinstance(value, list) else [value])
-            if isinstance(obj, TimeSlot):
+            if type(obj).__name__ == "TimeSlot":
                 neighbours.extend(obj.contributing_machines)
-            if isinstance(obj, Machine):
+            if type(obj).__name__ == "Machine":
                 neighbours.extend(obj.time_slots)
             for n in neighbours:
                 if n is not None and type(n) in BY_CLASS and id(n) not in seen:
@@ -130,7 +130,7 @@ class Repository:
                 getattr(obj, attr).sort(key=key)
         for m in MAPPINGS:
             for obj in world.index[m.cls].values():
-                if isinstance(obj, Immutable) and getattr(obj, "posted", True):
+                if hasattr(obj, "seal") and getattr(obj, "posted", True):
                     obj.seal()
                 world._snap[id(obj)] = _row(m, obj)
         LoyaltyRule.register(world.all(LoyaltyRule))

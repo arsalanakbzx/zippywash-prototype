@@ -162,7 +162,31 @@ MAPPINGS: list[Mapping] = [
              Ref("machine", Machine, "notifications"), Ref("inventory_item", InventoryItem, "notifications")]),
 ]
 
-BY_CLASS = {m.cls: m for m in MAPPINGS}
+class ByClassName(dict):
+    """A dict keyed by class *name*. Streamlit reloads edited modules while the app runs, which can
+    create a second copy of a class; looking classes up by name keeps both copies working."""
+
+    @staticmethod
+    def _k(key):
+        return key.__name__ if isinstance(key, type) else key
+
+    def __getitem__(self, key):
+        return super().__getitem__(self._k(key))
+
+    def __setitem__(self, key, value):
+        super().__setitem__(self._k(key), value)
+
+    def __contains__(self, key):
+        return super().__contains__(self._k(key))
+
+    def get(self, key, default=None):
+        return super().get(self._k(key), default)
+
+    def setdefault(self, key, default=None):
+        return super().setdefault(self._k(key), default)
+
+
+BY_CLASS = ByClassName({m.cls.__name__: m for m in MAPPINGS})
 
 # Many-to-many: TimeSlot.contributing_machines <-> Machine.time_slots
 JOIN_TABLE = "time_slot_machines"
