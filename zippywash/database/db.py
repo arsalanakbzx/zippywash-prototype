@@ -7,10 +7,13 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 SCHEMA_VERSION = 3   # Prototype 2 model; must match "PRAGMA user_version" in schema.sql
-DEFAULT_DB_PATH = Path(os.environ.get("ZIPPYWASH_DB", Path(__file__).resolve().parents[2] / "zippywash.db"))
+DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "zippywash.db"
 
 
-def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
+def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
+    """Open the database: the given path, else $ZIPPYWASH_DB, else zippywash.db in the project folder.
+    The file is created (empty) on first run and is never part of the submission."""
+    db_path = db_path or os.environ.get("ZIPPYWASH_DB") or DEFAULT_DB_PATH
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

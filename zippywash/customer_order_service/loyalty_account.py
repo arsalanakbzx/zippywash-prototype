@@ -172,6 +172,7 @@ class LoyaltyAccount(Entity):
             raise DomainError("You don't have enough available points for this reward.")
         # 3. One reservation entry: create, validate, post
         reservation = LoyaltyTransaction.create(T.RESERVATION, reward.points_required, self, reward, order)
+        reservation.set_context(reason=f"Held for '{reward.name}' at checkout")
         if not reservation.validate():
             raise DomainError("The reservation is not valid.")
         reservation.post()

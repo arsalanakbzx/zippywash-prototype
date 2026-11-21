@@ -24,10 +24,8 @@ class PaymentMethod(Entity):
     label: str = ""   # display text only, e.g. "Visa ending 4242" (technical, not a model attribute)
 
     def __post_init__(self):
-        try:
-            self.type = PaymentMethodType(self.type)
-        except ValueError:
-            pass   # validate() reports an unsupported type
+        if self.type in {t.value for t in PaymentMethodType}:
+            self.type = PaymentMethodType(self.type)   # anything else stays as given; validate() rejects it
 
     def validate(self) -> bool:
         """Nonblank processor token, supported type, active, and owned by its customer."""

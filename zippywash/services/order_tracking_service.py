@@ -1,8 +1,10 @@
 """OrderTrackingService — UC-02: the customer views status (read-only); staff record status changes."""
 from __future__ import annotations
 
-from zippywash.common import (DomainError, LoyaltyAccountStatus, NotificationType, OrderStatus, PaymentStatus)
+from zippywash.common import (DomainError, LoyaltyAccountStatus, LoyaltyTransactionType, NotificationType, OrderStatus,
+                              PaymentStatus)
 from zippywash.customer_order_service.customer import Customer
+from zippywash.customer_order_service.loyalty_rule import LoyaltyRule
 from zippywash.customer_order_service.notification import Notification
 from zippywash.customer_order_service.order import Order
 from zippywash.customer_order_service.order_status_update import OrderStatusUpdate
@@ -51,14 +53,12 @@ class OrderTrackingService:
         n.send()
         account = order.customer.loyalty_account
         if (target == OrderStatus.DELIVERED and account is not None
-                and account.status == LoyaltyAccountStatus.ACTIVE):
-            try:
-                earned = account.award_points(order)
-                Notification.create(NotificationType.LOYALTY_UPDATE,
-                                    f"You earned {earned.points} points on order {order.order_id}.",
-                                    customer_recipient=order.customer).send()
-            except DomainError:
-                pass   # no active rule or nothing to earn: the delivery itself still counts
+                and account.status == LoyaltyAccountStatus.ACTIVE and LoyaltyRule.current_rule() is not None
+                and LoyaltyRule.current_rule().calculate_points(order) > 0):
+            earned = account.award_points(order)
+            Notification.create(NotificationType.LOYALTY_UPDATE,
+                                f"You earned {earned.points} points on order {order.order_id}.",
+                                customer_recipient=order.customer).send()
         return update
 
     @staticmethod
@@ -71,11 +71,10 @@ class OrderTrackingService:
             if payment.status == PaymentStatus.AUTHORIZED and payment.refund():
                 refunded = payment
         account = order.customer.loyalty_account
-        if refunded is not None and account is not None:
-            try:
-                account.reverse_points(refunded)    # gives back points redeemed with this payment
-            except DomainError:
-                pass
+        if refunded is not None and account is not None and any(
+                t.payment is refunded and t.type in (LoyaltyTransactionType.EARN, LoyaltyTransactionType.REDEMPTION)
+                and not account.is_reversed(t) for t in account.transactions):
+            account.reverse_points(refunded)    # gives back points redeemed with this payment
         Notification.create(NotificationType.STATUS_CHANGED,
                             f"Order {order.order_id} was cancelled" + (" and refunded." if refunded else "."),
                             customer_recipient=order.customer).send()

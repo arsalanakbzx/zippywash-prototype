@@ -9,6 +9,7 @@ No real card numbers or credentials are ever used.
 """
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
@@ -26,12 +27,16 @@ class ProcessorResponse:
     message: str = ""
 
 
-class PaymentProcessor:
-    def request_authorization(self, payment_id: str, amount: Decimal, token: str) -> ProcessorResponse:
-        raise NotImplementedError("Use a concrete payment processor adapter.")
+class PaymentProcessor(ABC):
+    """Interface every processor adapter implements."""
 
+    @abstractmethod
+    def request_authorization(self, payment_id: str, amount: Decimal, token: str) -> ProcessorResponse:
+        """Ask the processor once to authorize amount on the tokenized method."""
+
+    @abstractmethod
     def request_refund(self, payment_id: str, amount: Decimal) -> bool:
-        raise NotImplementedError("Use a concrete payment processor adapter.")
+        """Ask the processor to refund an authorized payment; True when accepted."""
 
 
 class MockPaymentProcessor(PaymentProcessor):
