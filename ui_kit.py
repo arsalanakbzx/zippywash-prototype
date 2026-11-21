@@ -16,8 +16,10 @@ CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 html, body, [class*="css"], .stMarkdown, .stButton button, input, select, textarea, label {
   font-family: 'Inter', system-ui, -apple-system, sans-serif !important; }
-.block-container { max-width: 1080px; padding-top: 1.2rem; }
-header[data-testid="stHeader"] { background: transparent; }
+.block-container { max-width: 1080px; padding-top: 3.2rem; }
+/* Streamlit's own header strip sits over the top of the page: keep it from catching clicks on our menu */
+header[data-testid="stHeader"] { background: transparent; pointer-events: none; }
+header[data-testid="stHeader"] * { pointer-events: auto; }
 h1, h2, h3 { letter-spacing: -0.02em; }
 
 /* cards: every bordered container */
