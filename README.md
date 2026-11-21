@@ -15,7 +15,8 @@ attribute and every method are implemented. The screens follow the final **Miles
 | Prototype version | 2.0 |
 | Class model | Milestone 5 implementation class diagram (25 classes) |
 | Screens | Milestone 6: UC01-SC1, UC02-SC1, UC07-SC2 (with all alternate states) |
-| Tests | 164 automated tests, all passing (`pytest`) |
+| Tests | 165 automated tests, all passing (`pytest`) |
+| Visual design | Follows the Milestone 6 wireframes (top bar, five-step progress, cards, status banners) |
 | Python | 3.11 or newer (developed on 3.13) |
 
 ---
@@ -51,7 +52,8 @@ python -m pytest
 | **UC02-SC1** View the current order status | *My Orders* → *View Status*. | Latest status, update time and note ("No note available" when empty). Read-only. Switch the sidebar to **Nina** for the **No orders yet** state. |
 | Staff (UC02, UC03, UC04) | Sidebar → *Staff*. | Record status changes (role-checked), build / optimize / finalize routes and insert live pickups, report machine faults and repairs, record stock and see low-stock alerts. |
 
-Navigation: **Book Pickup · My Orders · Loyalty / Rewards · Profile**.
+Navigation: **Book Pickup · My Orders · Loyalty / Rewards · Profile**. The sidebar holds demo controls only
+(switch customer or staff member, reset the sample data). Order references look like `ZW-20261124-1842`.
 
 ---
 
@@ -68,7 +70,7 @@ flowchart LR
 
 | Layer | Owns | Never owns |
 |---|---|---|
-| `app.py` (UI) | Inputs, which screen is shown, messages | Prices, eligibility, status rules, capacity, payment, loyalty |
+| `app.py` (UI) and `ui_kit.py` (visual components, CSS) | Inputs, which screen is shown, messages, look | Prices, eligibility, status rules, capacity, payment, loyalty |
 | `zippywash/services/` | Order of calls for each use case | Business rules, SQL |
 | `zippywash/customer_order_service/`, `zippywash/operations_resource/` | The 25 classes, their rules and state changes | Streamlit, SQL |
 | `zippywash/database/` | Loading and saving; rebuilding typed relationships | Business decisions |

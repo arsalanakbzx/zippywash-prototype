@@ -105,8 +105,9 @@ class Order(Entity):
                 raise DomainError(f"{role} address {addr.postal_code} is outside our service sectors.")
         if service_type is None or not service_type.active:
             raise DomainError("Choose a service that is currently offered.")
-        order = Order(new_id("ORD"), now_local(), BagSize(bag_size), customer, pickup_address, delivery_address,
-                      service_type, pickup_request_type=PickupRequestType(pickup_request_type))
+        created = now_local()
+        order = Order(f"ZW-{created:%Y%m%d}-{new_id('X')[-4:]}", created, BagSize(bag_size), customer, pickup_address,
+                      delivery_address, service_type, pickup_request_type=PickupRequestType(pickup_request_type))
         order.order_items.append(OrderItem(new_id("OIT"), quantity, order))
         first = OrderStatusUpdate(new_id("OSU"), OrderStatus.DRAFT, order.created_at, order, "Checkout started")
         first.seal()
