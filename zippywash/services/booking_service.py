@@ -1,128 +1,179 @@
-"""BookingService — coordinates UC-01 (Book Pickup & Delivery) with UC-05 (price + online payment).
+"""BookingService — UC-01 booking with UC-05 payment and UC-07 reward redemption at checkout.
 
-Services only orchestrate. Every business rule lives in a domain class method
-(Order.calculate_estimate, Order.confirm, TimeSlot.reserve_capacity, Payment.authorize ...).
+Services only orchestrate: they call domain methods in the right order inside one unit of work.
+Every business rule lives in the domain classes.
+
+Standard booking (handoff 8.1):
+  details -> time slots -> calculate_estimate -> Payment.create_attempt -> authorize -> record_result
+  -> AUTHORIZED: reserve both slots + confirm (Scheduled) + receipt + notification
+  -> FAILED / TIMED_OUT: order stays Draft, no slot capacity used
+Reward booking (handoff 8.2): reserve_points before payment (balance unchanged);
+  AUTHORIZED -> redeem_points once; FAILED / TIMED_OUT / cancelled -> restore_points once.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from zippywash.common import BagSize, DomainError, NotificationType, OrderStatus, PickupRequestType, new_id, now_iso
+from zippywash.common import (BagSize, DomainError, NotificationType, OrderStatus, PaymentStatus,
+                              PickupRequestType)
+from zippywash.customer_order_service.address import Address
+from zippywash.customer_order_service.customer import Customer
+from zippywash.customer_order_service.loyalty_transaction import LoyaltyTransaction
 from zippywash.customer_order_service.notification import Notification
-from zippywash.customer_order_service.order import Order, PriceBreakdown
-from zippywash.customer_order_service.order_status_update import OrderStatusUpdate
+from zippywash.customer_order_service.order import Order
 from zippywash.customer_order_service.payment import Payment
-from zippywash.database.repository import Repository
-from zippywash.integrations.payment_processor import MockPaymentProcessor, PaymentProcessor
+from zippywash.customer_order_service.payment_method import PaymentMethod
+from zippywash.customer_order_service.promotion import Promotion
+from zippywash.customer_order_service.reward import Reward
+from zippywash.customer_order_service.service_type import ServiceType
+from zippywash.customer_order_service.time_slot import TimeSlot
+from zippywash.database.repository import World
 
 
 @dataclass
-class BookingResult:
-    success: bool
-    order: Order
+class PaymentOutcome:
+    authorized: bool
     payment: Payment
     message: str
+    redeemed: LoyaltyTransaction | None = None
+    restored: LoyaltyTransaction | None = None
 
 
 class BookingService:
-    def __init__(self, repo: Repository, processor: PaymentProcessor | None = None):
-        self.repo = repo
-        self.processor = processor or MockPaymentProcessor()
+    def __init__(self, world: World):
+        self.world = world
 
-    # ---------- price preview (no saving) ----------
-    def quote(self, customer_id: str, service_type_id: str, bag_size: str,
-              promo_code: str | None = None) -> PriceBreakdown:
-        preview = Order("PREVIEW", customer_id, BagSize(bag_size), "", "")
-        preview.add_item(self._service(service_type_id))
-        return preview.calculate_estimate(self._promo(promo_code))
+    # ---------------- WF01 booking details ----------------
+    def start_booking(self, customer: Customer, pickup_address: Address, delivery_address: Address,
+                      service_type: ServiceType, bag_size: BagSize,
+                      pickup_request_type: PickupRequestType = PickupRequestType.SCHEDULED) -> Order:
+        """Create a Draft order. Any older unfinished checkout of this customer is closed first,
+        so points held for it are released."""
+        for old in list(customer.orders):
+            if old.status == OrderStatus.DRAFT:
+                old.cancel()
+        return Order.start(customer, pickup_address, delivery_address, service_type, bag_size,
+                           pickup_request_type=pickup_request_type)
 
-    # ---------- full booking ----------
-    def book(self, *, customer_id: str, service_type_id: str, bag_size: str,
-             pickup_address_id: str, delivery_address_id: str,
-             pickup_slot_id: str, delivery_slot_id: str,
-             payment_method_id: str, promo_code: str | None = None) -> BookingResult:
-        repo = self.repo
-        with repo.conn:   # one transaction: everything is saved, or nothing is
-            customer = repo.get_customer(customer_id)
-            if customer is None:
-                raise DomainError("Customer not found.")
-            customer.ensure_can_book()
+    # ---------------- WF02 time slots ----------------
+    def open_slots(self, now) -> list[TimeSlot]:
+        slots = [s for s in self.world.all(TimeSlot) if not s.has_started(now) and s.check_capacity(1)]
+        return sorted(slots, key=lambda s: s.starts_at())
 
-            pickup, delivery = repo.get_address(pickup_address_id), repo.get_address(delivery_address_id)
-            p_slot, d_slot = repo.get_slot(pickup_slot_id), repo.get_slot(delivery_slot_id)
-            if None in (pickup, delivery, p_slot, d_slot):
-                raise DomainError("Choose a pickup and delivery address and time slot.")
-            Order.validate_booking(customer_id, pickup, delivery, p_slot, d_slot)
+    def choose_slots(self, order: Order, pickup_slot: TimeSlot, delivery_slot: TimeSlot) -> None:
+        order.select_time_slots(pickup_slot, delivery_slot)
+        order.calculate_estimate()
 
-            order = Order(new_id("ORD"), customer_id, BagSize(bag_size),
-                          pickup_address_id, delivery_address_id,
-                          pickup_request_type=PickupRequestType.SCHEDULED,
-                          pickup_time_slot_id=pickup_slot_id, delivery_time_slot_id=delivery_slot_id,
-                          created_at=now_iso())
-            order.add_item(self._service(service_type_id))   # the UI books one service per order
-            order.calculate_estimate(self._promo(promo_code))
-            repo.save_order(order)                      # saved as Draft until payment succeeds
-            return self._pay_and_confirm(order, payment_method_id)
-
-    # ---------- retry after a declined payment ----------
-    def retry_payment(self, order_id: str, payment_method_id: str) -> BookingResult:
-        with self.repo.conn:
-            order = self.repo.get_order(order_id)
-            if order is None or order.status != OrderStatus.DRAFT:
-                raise DomainError("Only an unpaid draft order can be paid again.")
-            return self._pay_and_confirm(order, payment_method_id)
-
-    # ---------- shared ----------
-    def _pay_and_confirm(self, order: Order, payment_method_id: str) -> BookingResult:
-        repo = self.repo
-        method = repo.get_payment_method(payment_method_id)
-        if method is None:
-            raise DomainError("Choose a payment method.")
-        method.validate(order.customer_id)
-
-        payment = Payment.create_attempt(order, method)
-        approved = payment.authorize(self.processor, method)
-        repo.save_payment(payment)
-
-        if not approved:
-            self._notify(order.customer_id, NotificationType.PAYMENT_RESULT,
-                         f"Payment for order {order.order_id} was declined.", payment_id=payment.payment_id)
-            return BookingResult(False, order, payment, payment.decline_reason or "Payment declined.")
-
-        p_slot, d_slot = repo.get_slot(order.pickup_time_slot_id), repo.get_slot(order.delivery_time_slot_id)
-        order.confirm(p_slot, d_slot, payment_authorized=True)
-        repo.save_slot(p_slot)
-        repo.save_slot(d_slot)
-        repo.save_order(order)
-
-        update = OrderStatusUpdate.record_status_change(order.order_id, OrderStatus.SCHEDULED,
-                                                        "Booked and paid online")
-        repo.add_status_update(update)
-        order.history.append(update)
-        self._notify(order.customer_id, NotificationType.BOOKING_CONFIRMED,
-                     f"Order {order.order_id} confirmed. Pickup {p_slot.label()}. "
-                     f"Receipt {payment.receipt_number}.", status_update_id=update.status_update_id,
-                     payment_id=payment.payment_id)
-        return BookingResult(True, order, payment, f"Order {order.order_id} is booked.")
-
-    def _notify(self, customer_id: str, type_: NotificationType, message: str, status_update_id=None,
-                payment_id=None):
-        n = Notification.create(type_, message, customer_id=customer_id, status_update_id=status_update_id,
-                                payment_id=payment_id)
-        n.send()
-        self.repo.add_notification(n)
-
-    def _service(self, service_type_id: str):
-        service = self.repo.get_service_type(service_type_id)
-        if service is None:
-            raise DomainError("Choose a service.")
-        return service
-
-    def _promo(self, code: str | None):
-        if not code or not code.strip():
-            return None
-        promo = self.repo.get_promotion_by_code(code)
+    # ---------------- WF03 review: promo code ----------------
+    def apply_promo_code(self, order: Order, code: str) -> Promotion:
+        code = (code or "").strip().upper()
+        promo = next((p for p in self.world.all(Promotion) if p.code == code), None)
         if promo is None:
-            raise DomainError(f"Promo code '{code.strip().upper()}' doesn't exist.")
-        promo.validate_eligibility()
+            raise DomainError(f"Promo code '{code}' doesn't exist.")
+        order.apply_promotion(promo)
+        try:
+            order.calculate_estimate()
+        except DomainError:
+            order.apply_promotion(None)
+            order.calculate_estimate()
+            raise
         return promo
+
+    def remove_promo_code(self, order: Order) -> None:
+        order.apply_promotion(None)
+        order.calculate_estimate()
+
+    # ---------------- UC07 WF01/WF02 rewards ----------------
+    def reward_options(self, order: Order) -> list[tuple[Reward, str | None]]:
+        """Every active reward with the reason it can't be used (None when it can)."""
+        account = order.customer.loyalty_account
+        options = []
+        for reward in sorted(self.world.all(Reward), key=lambda r: r.points_required):
+            if not reward.active:
+                continue
+            reason = ("Join the loyalty program to use rewards." if account is None
+                      else reward.ineligibility_reason(account, order))
+            options.append((reward, reason))
+        return options
+
+    def reserve_reward(self, order: Order, reward: Reward) -> LoyaltyTransaction:
+        account = order.customer.loyalty_account
+        if account is None:
+            raise DomainError("Join the loyalty program to use rewards.")
+        reservation = account.reserve_points(reward, order)
+        order.calculate_estimate()
+        return reservation
+
+    def release_reward(self, order: Order) -> LoyaltyTransaction | None:
+        """Cancel the reward at checkout: points restored, reward removed, original total back."""
+        account = order.customer.loyalty_account
+        restored = None
+        if account is not None:
+            for reservation in account.open_reservations(order=order):
+                restored = account.restore_points(reservation)
+        order.calculate_estimate()
+        return restored
+
+    # ---------------- WF04 payment ----------------
+    def pay(self, order: Order, payment_method: PaymentMethod) -> PaymentOutcome:
+        if order.status != OrderStatus.DRAFT:
+            raise DomainError("This order is already paid.")
+        if payment_method is None or payment_method.customer is not order.customer:
+            raise DomainError("Choose one of your saved payment methods.")
+        order.calculate_estimate()
+        account = order.customer.loyalty_account
+        reservation = None
+        if account is not None and order.applied_reward is not None:
+            held = account.open_reservations(order=order, reward=order.applied_reward)
+            reservation = held[0] if held else None
+
+        payment = Payment.create_attempt(order, order.estimated_total, payment_method)
+        result = payment.authorize()              # one processor call; status unchanged
+        payment.record_result(result)            # the service records the outcome
+
+        if result != PaymentStatus.AUTHORIZED:
+            restored = account.restore_points(reservation) if reservation is not None else None
+            order.calculate_estimate()            # back to the original total when a reward was released
+            self._notify(order, NotificationType.PAYMENT_RESULT,
+                         f"Payment for order {order.order_id} was not authorized. Your booking isn't confirmed.",
+                         payment=payment)
+            reason = payment.failure_reason or "Payment was not authorized."
+            if result == PaymentStatus.TIMED_OUT:
+                reason = "The payment service didn't answer in time. You weren't charged."
+            return PaymentOutcome(False, payment, reason, restored=restored)
+
+        # Authorized: make sure both slots still have room before using any points.
+        if not (order.pickup_time_slot.check_capacity(1) and order.delivery_time_slot.check_capacity(1)):
+            payment.refund()
+            restored = account.restore_points(reservation) if reservation is not None else None
+            order.calculate_estimate()
+            return PaymentOutcome(False, payment, "A time slot filled up while you were paying. The payment was "
+                                                  "refunded and your booking isn't confirmed. Choose another time.",
+                                  restored=restored)
+        redeemed = account.redeem_points(reservation, payment) if reservation is not None else None
+        order.confirm()                            # reserves both slots, status Scheduled
+        receipt = payment.generate_receipt()
+        update = order.get_current_status()
+        n = self._notify(order, NotificationType.BOOKING_CONFIRMED,
+                         f"Order {order.order_id} confirmed. Pickup {order.pickup_time_slot.label()}. "
+                         f"Receipt {receipt}.", payment=payment)
+        n.status_update = update
+        update.notifications.append(n)
+        return PaymentOutcome(True, payment, f"Order {order.order_id} is booked.", redeemed=redeemed)
+
+    def cancel_checkout(self, order: Order) -> LoyaltyTransaction | None:
+        """Leave checkout without paying: release reserved points and close the draft."""
+        restored = self.release_reward(order)
+        order.cancel()
+        return restored
+
+    # ---------------- helpers ----------------
+    @staticmethod
+    def _notify(order: Order, type_: NotificationType, message: str, payment: Payment | None = None
+                ) -> Notification:
+        n = Notification.create(type_, message, customer_recipient=order.customer)
+        if payment is not None:
+            n.payment = payment
+            payment.notifications.append(n)
+        n.send()
+        return n

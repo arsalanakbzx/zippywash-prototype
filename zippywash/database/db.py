@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-SCHEMA_VERSION = 2   # must match "PRAGMA user_version" in schema.sql
+SCHEMA_VERSION = 3   # Prototype 2 model; must match "PRAGMA user_version" in schema.sql
 DEFAULT_DB_PATH = Path(os.environ.get("ZIPPYWASH_DB", Path(__file__).resolve().parents[2] / "zippywash.db"))
 
 
@@ -26,8 +26,9 @@ def drop_all_tables(conn: sqlite3.Connection) -> None:
 
 
 def create_schema(conn: sqlite3.Connection) -> bool:
-    """Create every table. A demo database built by an older version of the schema is rebuilt
-    from scratch (it only ever holds sample data). Returns True if an old database was replaced."""
+    """Create every table. A database built by an older schema version (for example a Prototype 1
+    database) is never reused: it is dropped and rebuilt, since it only ever holds sample data.
+    Returns True if an old database was replaced."""
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     has_tables = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0] > 0
     rebuilt = has_tables and version != SCHEMA_VERSION

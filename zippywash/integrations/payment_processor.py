@@ -1,36 +1,54 @@
-"""Adapter for the external Payment Processor actor.
+"""Adapter for the external Payment Processor actor (not a problem-domain class).
 
-The real processor (e.g. Stripe) sits behind this interface. The prototype uses
-MockPaymentProcessor: any token starting with "tok_decline" is declined, so the
-demo can show a failed attempt followed by a successful retry.
+The real processor (e.g. Stripe) would sit behind this interface. The prototype uses
+MockPaymentProcessor with demo tokens:
+  tok_decline...  -> the bank declines        (Payment result FAILED)
+  tok_timeout...  -> no answer in time        (Payment result TIMED_OUT)
+  any other tok_  -> approved                 (Payment result AUTHORIZED)
+No real card numbers or credentials are ever used.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import Enum
+
+
+class ProcessorOutcome(str, Enum):
+    APPROVED = "Approved"
+    DECLINED = "Declined"
+    TIMEOUT = "Timeout"
 
 
 @dataclass
-class AuthorizationResult:
-    approved: bool
-    reason: str | None = None
+class ProcessorResponse:
+    outcome: ProcessorOutcome
+    message: str = ""
 
 
 class PaymentProcessor:
-    def authorize(self, token: str, amount: Decimal) -> AuthorizationResult:
-        raise NotImplementedError
+    def request_authorization(self, payment_id: str, amount: Decimal, token: str) -> ProcessorResponse:
+        raise NotImplementedError("Use a concrete payment processor adapter.")
 
-    def refund(self, payment_id: str, amount: Decimal) -> None:
-        raise NotImplementedError
+    def request_refund(self, payment_id: str, amount: Decimal) -> bool:
+        raise NotImplementedError("Use a concrete payment processor adapter.")
 
 
 class MockPaymentProcessor(PaymentProcessor):
-    def authorize(self, token: str, amount: Decimal) -> AuthorizationResult:
-        if amount <= 0:
-            return AuthorizationResult(False, "Amount must be greater than zero.")
-        if token.startswith("tok_decline"):
-            return AuthorizationResult(False, "Card declined by the bank. Try another payment method.")
-        return AuthorizationResult(True)
+    def __init__(self):
+        self.authorization_calls: list[tuple[str, Decimal, str]] = []
+        self.refund_calls: list[tuple[str, Decimal]] = []
 
-    def refund(self, payment_id: str, amount: Decimal) -> None:
-        return None
+    def request_authorization(self, payment_id: str, amount: Decimal, token: str) -> ProcessorResponse:
+        self.authorization_calls.append((payment_id, amount, token))
+        if amount <= 0:
+            return ProcessorResponse(ProcessorOutcome.DECLINED, "Amount must be greater than zero.")
+        if token.startswith("tok_decline"):
+            return ProcessorResponse(ProcessorOutcome.DECLINED, "The bank declined this card.")
+        if token.startswith("tok_timeout"):
+            return ProcessorResponse(ProcessorOutcome.TIMEOUT, "The payment service didn't answer in time.")
+        return ProcessorResponse(ProcessorOutcome.APPROVED)
+
+    def request_refund(self, payment_id: str, amount: Decimal) -> bool:
+        self.refund_calls.append((payment_id, amount))
+        return True

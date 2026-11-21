@@ -1,21 +1,46 @@
-"""C07 OrderStatusUpdate — one entry in an order's status history (never overwritten)."""
+"""OrderStatusUpdate — an immutable audit entry for one order status change."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import TYPE_CHECKING
 
-from zippywash.common import OrderStatus, new_id, now_iso
+from zippywash.common import DomainError, Entity, Immutable, OrderStatus, link, new_id, now_local
+
+if TYPE_CHECKING:
+    from zippywash.customer_order_service.notification import Notification
+    from zippywash.customer_order_service.order import Order
+    from zippywash.operations_resource.staff_member import StaffMember
 
 
-@dataclass
-class OrderStatusUpdate:
+@dataclass(eq=False, repr=False)
+class OrderStatusUpdate(Immutable, Entity):
+    _pk = "status_update_id"
+    _frozen_fields = ("status_update_id", "status", "changed_at", "notes", "order", "recorded_by")
+
     status_update_id: str
-    order_id: str
     status: OrderStatus
-    changed_at: str
-    notes: str | None = None
-    recorded_by_staff_id: str | None = None
+    changed_at: datetime
+    order: Order | None = None                                      # [1..1]
+    notes: str | None = None                                        # [0..1]
+    recorded_by: StaffMember | None = None                          # [0..1]
+    notifications: list[Notification] = field(default_factory=list) # [0..*]
 
-    @classmethod
-    def record_status_change(cls, order_id: str, status: OrderStatus,
-                             notes: str | None = None, staff_id: str | None = None) -> "OrderStatusUpdate":
-        return cls(new_id("OSU"), order_id, OrderStatus(status), now_iso(), notes or None, staff_id)
+    def __post_init__(self):
+        object.__setattr__(self, "status", OrderStatus(self.status))
+
+    @staticmethod
+    def record_status_change(order: Order, new_status: OrderStatus, recorded_by: StaffMember | None = None,
+                             notes: str | None = None) -> OrderStatusUpdate:
+        """Validate the transition, create exactly one timestamped entry, append it to the order's
+        history and move the order to the new status. Older entries are never edited."""
+        new_status = OrderStatus(new_status)
+        order.check_transition(new_status, recorded_by)
+        update = OrderStatusUpdate(new_id("OSU"), new_status, now_local(), order,
+                                   (notes or "").strip() or None, recorded_by)
+        update.seal()
+        order.status_history.append(update)
+        order.status = new_status
+        if recorded_by is not None:
+            link(recorded_by.status_updates, update)
+        return update

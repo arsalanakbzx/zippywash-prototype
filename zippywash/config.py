@@ -1,8 +1,7 @@
 """Business settings for the prototype.
 
-PLACEHOLDERS: the team has not confirmed ZippyWash's real prices yet
-(open decision #4 "Pricing inputs" in the Milestone 3 handoff). Change the
-numbers here only; every price in the app reads from this file.
+These numbers are sample settings for the demo, not confirmed ZippyWash prices.
+Change them here only: every price and limit in the app reads from this file.
 """
 from decimal import Decimal
 
@@ -23,6 +22,13 @@ QST_RATE = Decimal("0.09975")   # Quebec QST 9.975%
 MIN_TURNAROUND_DAYS = 1
 
 CURRENCY_STEP = Decimal("0.01")
+
+# Each operational machine linked to a time slot lets the slot take this many orders.
+ORDERS_PER_MACHINE_PER_SLOT = 2
+
+# Route planning (simulated, no live maps): minutes between stops and km per stop change.
+MINUTES_PER_STOP = 15
+KM_PER_STOP = Decimal("2.5")
 
 # ZippyWash operates in Montréal: "today" and "now" use this time zone, not the server's.
 TIMEZONE = "America/Toronto"
