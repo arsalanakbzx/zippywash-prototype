@@ -12,8 +12,9 @@ import json
 from datetime import date
 from decimal import Decimal
 
-from zippywash.common import (STATUS_SEQUENCE, PaymentMethodType, new_id, BagSize, DomainError, LoyaltyTransactionType, OrderStatus,
+from zippywash.common import (STATUS_SEQUENCE, PaymentMethodType, money, new_id, BagSize, DomainError, LoyaltyTransactionType, OrderStatus,
                               PickupRequestType, StaffRole, StockMovementType, now_local, today_local)
+from zippywash.config import DELIVERY_FEE, GST_RATE, QST_RATE
 from zippywash.customer_order_service.customer import Customer
 from zippywash.customer_order_service.loyalty_account import LoyaltyAccount
 from zippywash.customer_order_service.order import ROLE_FOR_STATUS, Order
@@ -212,13 +213,23 @@ class ZippyWashAPI:
         draft = next((o for o in c.orders if o.status == OrderStatus.DRAFT), None)
         return {
             "active": c.is_active(),
-            "services": [{"id": s.service_type_id, "name": s.name, "rate": m(s.base_rate)}
+            "services": [{"id": s.service_type_id, "name": s.name, "rate": m(s.base_rate),
+                          "quotes": {b.value: self._quote(s, b) for b in BagSize}}
                          for s in self.world.all(ServiceType) if s.active],
             "bag_sizes": [b.value for b in BagSize],
             "addresses": [address_json(a) for a in c.addresses if a.validate()],
             "pickup_types": [t.value for t in PickupRequestType],
             "draft": draft.order_id if draft else None,
         }
+
+    @staticmethod
+    def _quote(service, size):
+        """Price before any discount, with the same rules as Order.calculate_estimate (shown on Step 1)."""
+        subtotal = service.calculate_base_price(size)
+        taxable = subtotal + DELIVERY_FEE
+        gst, qst = money(taxable * GST_RATE), money(taxable * QST_RATE)
+        return {"subtotal": m(subtotal), "delivery_fee": m(DELIVERY_FEE), "gst": m(gst), "qst": m(qst),
+                "total": m(money(taxable + gst + qst))}
 
     def op_start_booking(self, customer_id, pickup_address_id, delivery_address_id, service_type_id, bag_size,
                          pickup_request_type="Scheduled"):

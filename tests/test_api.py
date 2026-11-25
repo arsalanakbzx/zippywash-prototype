@@ -113,3 +113,24 @@ def test_reset_restores_sample_data(api):
     oid, _ = checkout(api)
     ok(api.call("reset"))
     assert ok(api.call("booking_options", {"customer_id": "CUS-LEA"}))["draft"] is None
+
+
+def test_step1_quote_matches_real_order_price():
+    """The price shown on Booking Details must equal what Review computes, for every service and size."""
+    api = ZippyWashAPI(InMemoryRepository())
+    opts = api.call("booking_options", {"customer_id": "CUS-NINA"})["data"]
+    nina_addr = api.call("profile", {"customer_id": "CUS-NINA"})["data"]["addresses"]
+    if not nina_addr:
+        api.call("add_address", {"customer_id": "CUS-NINA", "street": "1 Test St", "postal_code": "H3G 1L3"})
+    addr = [a for a in api.call("booking_options", {"customer_id": "CUS-NINA"})["data"]["addresses"]][0]["id"]
+    for svc in opts["services"]:
+        for size, quote in svc["quotes"].items():
+            r = api.call("start_booking", {"customer_id": "CUS-NINA", "pickup_address_id": addr, "delivery_address_id": addr,
+                                           "service_type_id": svc["id"], "bag_size": size})
+            oid = r["data"]["order_id"]
+            slots = api.call("open_slots", {"customer_id": "CUS-NINA", "order_id": oid})["data"]
+            later = next(x for x in slots if x["date"] > slots[0]["date"])
+            order = api.call("choose_slots", {"customer_id": "CUS-NINA", "order_id": oid,
+                                              "pickup_slot_id": slots[0]["id"], "delivery_slot_id": later["id"]})["data"]
+            assert order["price"]["total"] == quote["total"], (svc["name"], size)
+            api.call("cancel_checkout", {"customer_id": "CUS-NINA", "order_id": order["id"]})

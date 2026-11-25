@@ -101,6 +101,8 @@ function Details({ go }) {
   if (!o.active) return <><Header step="details" /><Banner tone="danger" title="This account is deactivated">It can't place new orders. Your history is still in My Orders.</Banner></>;
   if (!o.addresses.length) return <><Header step="details" /><Banner tone="info" title="Add an address first">Add an address inside our service area under Profile.</Banner></>;
   const set = (k) => (v) => setForm((f) => ({ ...f, [k]: v?.target ? v.target.value : v }));
+  const service = o.services.find((x) => x.id === form.service);
+  const quote = service?.quotes[form.bag];
   const submit = async () => {
     setBusy(true); setErr(null);
     try {
@@ -120,7 +122,8 @@ function Details({ go }) {
             </select>
           </Field>
           <Field label="Bag size *">
-            <Choice columns={3} value={form.bag} onChange={set("bag")} options={o.bag_sizes.map((b) => ({ value: b, label: b }))} />
+            <Choice columns={3} value={form.bag} onChange={set("bag")} options={o.bag_sizes.map((b) => ({ value: b, label: b }))}
+              render={(x) => <><span className="block font-medium leading-tight">{x.label}</span><span className="block text-xs text-gray-500">{money(service?.quotes[x.value].subtotal)}</span></>} />
           </Field>
           <Field label="Pickup address *">
             <select className={inputCls} value={form.pickup} onChange={set("pickup")}>{o.addresses.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}</select>
@@ -137,6 +140,19 @@ function Details({ go }) {
             </Field>
           </div>
         </div>
+        {quote && (
+          <div className="fade-in mt-6 flex flex-wrap items-end justify-between gap-3 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3.5" key={`${form.service}-${form.bag}`}>
+            <div className="text-sm text-gray-600">
+              <div className="font-medium text-gray-900">{service.name} · {form.bag} bag</div>
+              {money(quote.subtotal)} + {money(quote.delivery_fee)} pickup & delivery + {money(Number(quote.gst) + Number(quote.qst))} taxes (GST + QST)
+            </div>
+            <div className="sm:text-right">
+              <div className="text-xs font-medium uppercase tracking-wide text-brand-700">Estimated total</div>
+              <div className="text-2xl font-bold text-gray-900">{money(quote.total)}</div>
+            </div>
+          </div>
+        )}
+        <p className="mt-2 text-xs text-gray-500">Promo codes and loyalty rewards can be applied at Review.</p>
         <ErrorText>{err}</ErrorText>
         <Footer step="details">
           <Button variant="primary" loading={busy} onClick={submit}>Continue to Time Slots <ArrowRight className="h-4 w-4" /></Button>
