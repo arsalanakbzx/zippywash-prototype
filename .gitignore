@@ -5,3 +5,7 @@ zippywash.db
 .venv/
 .DS_Store
 .env
+web/node_modules/
+web/dist/
+web/public/pyodide/
+web/public/zippywash.zip

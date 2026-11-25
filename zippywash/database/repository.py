@@ -12,14 +12,17 @@ known objects; objects nothing points to yet (e.g. a new time slot) are added wi
 """
 from __future__ import annotations
 
-import sqlite3
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from zippywash.common import link
 from zippywash.customer_order_service.loyalty_rule import LoyaltyRule
 from zippywash.database.mapping import BY_CLASS, JOIN_TABLE, MAPPINGS, SORT_KEYS, ByClassName, from_db, to_db
 from zippywash.customer_order_service.time_slot import TimeSlot
 from zippywash.operations_resource.machine import Machine
+
+if TYPE_CHECKING:
+    import sqlite3
 
 
 class World:
@@ -168,3 +171,24 @@ class Repository:
         for m in MAPPINGS:
             counts[m.table] = self.conn.execute(f"SELECT COUNT(*) FROM {m.table}").fetchone()[0]
         return dict(counts)
+
+
+class InMemoryRepository:
+    """Same interface as Repository, but keeps one World in memory and never touches a database.
+
+    Used by the web app, where the Python domain runs inside the visitor's browser: each visitor
+    gets their own private copy of the demo data, and reloading the page starts fresh."""
+
+    def __init__(self):
+        self.world: World | None = None
+
+    def load(self) -> World:
+        if self.world is None:
+            self.world = World()
+        LoyaltyRule.register(self.world.all(LoyaltyRule))
+        return self.world
+
+    def commit(self, world: World) -> int:
+        world.discover()          # register new objects (new orders, payments...) in the identity map
+        self.world = world
+        return 0

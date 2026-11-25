@@ -15,11 +15,30 @@ attribute and every method are implemented. The screens follow the final **Miles
 | Prototype version | 2.0 |
 | Class model | Milestone 5 implementation class diagram (25 classes) |
 | Screens | Milestone 6: UC01-SC1, UC02-SC1, UC07-SC2 (with all alternate states) |
-| Tests | 165 automated tests, all passing (`pytest`) |
+| Tests | 172 automated tests, all passing (`pytest`) |
 | Visual design | Follows the Milestone 6 wireframes (top bar, five-step progress, cards, status banners) |
 | Python | 3.11 or newer (developed on 3.13) |
 
 ---
+
+## Final prototype — live web app
+
+**Live demo:** https://arsalanakbzx.github.io/zippywash-prototype/
+
+The final prototype is a React web app (`web/`) that runs the same Python `zippywash` package
+**inside the browser** with Pyodide. No server and no cost: GitHub Pages hosts static files, and
+every visitor gets a private copy of the sample data (reload or "Reset sample data" to start over).
+
+- Customer app: Book Pickup (UC01, UC05, UC07 at checkout), My Orders (UC02), Loyalty / Rewards (UC07), Profile (UC06)
+- Staff dashboard: Overview, Order board (UC02), Routes (UC04), Machines and Inventory (UC03), Loyalty admin (UC07)
+- **Guided demo** button: a step-by-step panel for the 15-minute presentation
+- Works on desktop and phone
+
+Run locally: `cd web && npm install && npm run dev`. Deploys automatically on every push to `main`
+(`.github/workflows/pages.yml` runs the Python tests, builds `web/`, publishes to Pages).
+`zippywash/api.py` is the JSON bridge between the screens and the domain classes.
+
+The Streamlit app (`app.py`, Prototype 2) is kept as a backup.
 
 ## Set up and run
 
