@@ -132,5 +132,6 @@ def test_step1_quote_matches_real_order_price():
             later = next(x for x in slots if x["date"] > slots[0]["date"])
             order = api.call("choose_slots", {"customer_id": "CUS-NINA", "order_id": oid,
                                               "pickup_slot_id": slots[0]["id"], "delivery_slot_id": later["id"]})["data"]
+            assert order["price"]["subtotal"] == quote["subtotal"], (svc["name"], size)
             assert order["price"]["total"] == quote["total"], (svc["name"], size)
             api.call("cancel_checkout", {"customer_id": "CUS-NINA", "order_id": order["id"]})

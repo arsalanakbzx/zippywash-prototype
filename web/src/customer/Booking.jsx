@@ -144,11 +144,11 @@ function Details({ go }) {
           <div className="fade-in mt-6 flex flex-wrap items-end justify-between gap-3 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3.5" key={`${form.service}-${form.bag}`}>
             <div className="text-sm text-gray-600">
               <div className="font-medium text-gray-900">{service.name} · {form.bag} bag</div>
-              {money(quote.subtotal)} + {money(quote.delivery_fee)} pickup & delivery + {money(Number(quote.gst) + Number(quote.qst))} taxes (GST + QST)
+              Pickup & delivery fee and taxes are added at checkout.
             </div>
             <div className="sm:text-right">
-              <div className="text-xs font-medium uppercase tracking-wide text-brand-700">Estimated total</div>
-              <div className="text-2xl font-bold text-gray-900">{money(quote.total)}</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-brand-700">Estimated price</div>
+              <div className="text-2xl font-bold text-gray-900">{money(quote.subtotal)}</div>
             </div>
           </div>
         )}
